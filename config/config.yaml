@@ -1,0 +1,4 @@
+model : 
+  name: gemini
+  max_tokens: 2048
+  temperature: 0.7

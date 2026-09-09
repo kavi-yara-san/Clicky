@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand-Drawn Sketch Canvas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Rough.js for dynamic hand-drawn vector stroke rendering -->
+    <script src="https://unpkg.com/roughjs@latest/bundled/rough.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&display=swap" rel="stylesheet">
+    <style>
+        html,
+        body {
+            font-family: 'Architects Daughter', cursive;
+            background-color: #ffffff;
+            overscroll-behavior: none;
+        }
+
+        .sketch-input {
+            outline: none;
+            font-family: 'Architects Daughter', cursive;
+        }
+
+        .sketch-input::placeholder {
+            color: #a0a0a0;
+        }
+
+        /* ---- Infinite whiteboard ---- */
+        #board {
+            position: relative;
+            touch-action: none;
+            cursor: grab;
+            background-color: #ffffff;
+            background-image: radial-gradient(circle, #d7d7d7 1.4px, transparent 1.4px);
+        }
+
+        #board.panning {
+            cursor: grabbing;
+        }
+
+        #board-world {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform-origin: 0 0;
+            will-change: transform;
+        }
+
+        .widget-card {
+            position: absolute;
+            width: 940px;
+            height: 640px;
+            max-width: 1400px;
+            background: transparent;
+            overflow: visible;
+            /* or auto, if you want scrolling instead of clipping */
+        }
+
+        /* Empty-board hint, drawn in the same handwritten voice as the rest of the UI */
+        #empty-hint {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #b6b6b6;
+            font-size: 1.5rem;
+            pointer-events: none;
+            text-align: center;
+            user-select: none;
+        }
+    </style>
+</head>
+
+<body class="h-screen w-screen overflow-hidden flex flex-col items-center justify-between p-0 m-0">
+
+    <!-- Infinite pan/zoom whiteboard -->
+    <main class="w-full h-full relative flex items-center justify-center">
+        <div id="board" class="w-full h-full">
+            <div id="board-world">
+                <!-- generated widgets get appended here as world-space cards -->
+            </div>
+            <div id="empty-hint">type a concept below to draw it here</div>
+        </div>
+    </main>
+
+    <!-- Sketch Floating Prompt Bar Container -->
+    <footer class="fixed bottom-10 w-full max-w-2xl px-4 z-50 flex justify-center">
+        <div id="panel-wrapper" class="relative w-full py-2.5 px-4 flex items-center gap-3">
+
+            <!-- SVG overlay for Rough.js vector strokes -->
+            <svg id="sketch-canvas" class="absolute inset-0 w-full h-full pointer-events-none overflow-visible"></svg>
+
+            <!-- Handwritten Chevron Icon -->
+            <div class="text-2xl font-bold text-slate-900 select-none pl-2 flex items-center justify-center">
+                &gt;
+            </div>
+
+            <!-- Hand-drawn Text Input Form -->
+            <form id="prompt-form" onsubmit="handleGenerate(event)" class="flex-1">
+                <input type="text" id="prompt-input" placeholder="type a concept to visualize..."
+                    class="sketch-input w-full bg-transparent text-slate-900 text-xl font-bold px-1" required
+                    autocomplete="off" />
+                <button type="submit" class="hidden"></button>
+            </form>
+        </div>
+    </footer>
+
+    <script>
+        // ---------------------------------------------------------------
+        // Prompt panel (unchanged)
+        // ---------------------------------------------------------------
+        function drawRoughPanel() {
+            const container = document.getElementById('panel-wrapper');
+            const svg = document.getElementById('sketch-canvas');
+            svg.innerHTML = ''; // Reset canvas
+
+            const rect = container.getBoundingClientRect();
+            const rc = rough.svg(svg);
+
+            const sketchBorder = rc.rectangle(2, 2, rect.width - 4, rect.height - 4, {
+                roughness: 2.2,
+                strokeWidth: 2.5,
+                stroke: '#1e1e1e',
+                bowing: 1.5,
+                strokeLineDash: []
+            });
+
+            svg.appendChild(sketchBorder);
+        }
+
+        window.addEventListener('load', drawRoughPanel);
+        window.addEventListener('resize', drawRoughPanel);
+
+        // ---------------------------------------------------------------
+        // Infinite whiteboard: pan + zoom, Excalidraw-style
+        // ---------------------------------------------------------------
+        const board = document.getElementById('board');
+        const world = document.getElementById('board-world');
+        const emptyHint = document.getElementById('empty-hint');
+
+        const GRID_SPACING = 28; // px, at zoom = 1
+        const MIN_ZOOM = 0.2;
+        const MAX_ZOOM = 3;
+
+        let panX = 0;
+        let panY = 0;
+        let zoom = 1;
+
+        let isPanning = false;
+        let lastPointerX = 0;
+        let lastPointerY = 0;
+
+        function applyBoardTransform() {
+            world.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+
+            // Keep the dot grid in lockstep with pan/zoom so it reads as one
+            // continuous infinite surface behind the world elements.
+            const size = GRID_SPACING * zoom;
+            board.style.backgroundSize = `${size}px ${size}px`;
+            board.style.backgroundPosition = `${panX % size}px ${panY % size}px`;
+        }
+
+        function screenToWorld(screenX, screenY) {
+            return {
+                x: (screenX - panX) / zoom,
+                y: (screenY - panY) / zoom
+            };
+        }
+
+        function zoomAt(screenX, screenY, factor) {
+            const before = screenToWorld(screenX, screenY);
+            zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+            panX = screenX - before.x * zoom;
+            panY = screenY - before.y * zoom;
+            applyBoardTransform();
+        }
+
+        // Mouse-drag panning (also used as the fallback for touch/trackpad drag)
+        board.addEventListener('pointerdown', (e) => {
+            if (e.target.closest('.widget-card')) return; // let widgets handle their own input
+            isPanning = true;
+            lastPointerX = e.clientX;
+            lastPointerY = e.clientY;
+            board.classList.add('panning');
+            board.setPointerCapture(e.pointerId);
+        });
+
+        board.addEventListener('pointermove', (e) => {
+            if (!isPanning) return;
+            panX += e.clientX - lastPointerX;
+            panY += e.clientY - lastPointerY;
+            lastPointerX = e.clientX;
+            lastPointerY = e.clientY;
+            applyBoardTransform();
+        });
+
+        function endPan(e) {
+            isPanning = false;
+            board.classList.remove('panning');
+        }
+        board.addEventListener('pointerup', endPan);
+        board.addEventListener('pointercancel', endPan);
+        board.addEventListener('pointerleave', endPan);
+
+        // Wheel: trackpad two-finger scroll pans, pinch (ctrlKey) or
+        // ctrl/cmd+wheel zooms toward the cursor — same convention as Excalidraw.
+        board.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = board.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (e.ctrlKey || e.metaKey) {
+                const factor = Math.exp(-e.deltaY * 0.01);
+                zoomAt(x, y, factor);
+            } else {
+                panX -= e.deltaX;
+                panY -= e.deltaY;
+                applyBoardTransform();
+            }
+        }, { passive: false });
+
+        // Keyboard zoom shortcuts, centered on the viewport
+        window.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+                e.preventDefault();
+                zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1.2);
+            } else if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+                e.preventDefault();
+                zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / 1.2);
+            } else if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+                e.preventDefault();
+                panX = 0; panY = 0; zoom = 1;
+                applyBoardTransform();
+            }
+        });
+
+        applyBoardTransform();
+
+        // ---------------------------------------------------------------
+        // Generation: send the prompt, drop the returned widget fragment
+        // onto the board as a world-space card.
+        // ---------------------------------------------------------------
+        let placedCount = 0;
+
+        function handleGenerate(event) {
+            event.preventDefault();
+            const input = document.getElementById('prompt-input');
+            const promptText = input.value.trim();
+            if (!promptText) return;
+
+            input.style.opacity = "0.5";
+
+            fetch('/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ prompt: promptText })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    input.style.opacity = "1";
+                    input.value = "";
+                    if (data.html_code) {
+                        placeWidget(data.html_code);
+                    }
+                })
+                .catch(err => {
+                    input.style.opacity = "1";
+                    console.error("Execution Error:", err);
+                });
+        }
+
+        // Widget fragments (per ConceptViz's output contract) are a root
+        // <div> plus a trailing <script> — no doctype/head/body. Insert the
+        // markup, then re-create and append the <script> so it executes.
+        function placeWidget(fragmentHtml) {
+            emptyHint.remove();
+
+            const card = document.createElement('div');
+            card.className = 'widget-card';
+
+            // Stagger new cards left-to-right so the board reads like a
+            // growing whiteboard rather than overlapping sketches.
+            const col = placedCount % 3;
+            const row = Math.floor(placedCount / 3);
+            card.style.left = `${col * 980}px`;
+            card.style.top = `${row * 680}px`;
+            placedCount++;
+
+            const temp = document.createElement('div');
+            temp.innerHTML = fragmentHtml;
+
+            const scripts = Array.from(temp.querySelectorAll('script'));
+            scripts.forEach(s => s.remove());
+
+            card.append(...temp.childNodes);
+            world.appendChild(card);
+
+            scripts.forEach(oldScript => {
+                const newScript = document.createElement('script');
+                if (oldScript.src) {
+                    newScript.src = oldScript.src;
+                } else {
+                    newScript.textContent = oldScript.textContent;
+                }
+                card.appendChild(newScript);
+            });
+
+            // Pan the new card into view, keeping the current zoom level.
+            const targetX = col * 980 + 450;
+            const targetY = row * 680 + 300;
+            panX = board.clientWidth / 2 - targetX * zoom;
+            panY = board.clientHeight / 2 - targetY * zoom;
+            applyBoardTransform();
+        }
+    </script>
+</body>
+
+</html>
