@@ -95,7 +95,7 @@ And Clicky can turn the idea into an interactive visualization.
 
 Clicky can generate interactive visual explanations from simple prompts.
 
-👉 **[Open the interactive demo](examples/demo.html)**
+👉 **[🚀 Try the Interactive Demo](https://kavi-yara-san.github.io/Clicky/)**
 ---
 
 ## 🎨 Clean Diagram + Human Annotations
