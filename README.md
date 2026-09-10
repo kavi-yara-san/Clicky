@@ -158,8 +158,19 @@ pip install -r requirements.txt
 
 ### 4. Configure the model
 
-Configure your API credentials and model settings according to the project's configuration.
 
+Create a `.env` file in the project root with your API key:
+
+​```bash
+API_KEY=your-api-key-here
+​```
+
+Then edit `config/config.yaml` to set your model name:
+
+​```yaml
+model:
+  name: your-model-name
+​```
 ### 5. Run Clicky
 
 ```bash
@@ -277,7 +288,7 @@ Clicky/
 * **FastAPI**
 * **Pydantic**
 * **Async Python**
-* **LLM adapters**
+* **LLM adapters (currently Gemini only)**
 * **HTML5 Canvas**
 * **JavaScript**
 * **Interactive HTML**
