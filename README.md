@@ -91,6 +91,11 @@ And Clicky can turn the idea into an interactive visualization.
 * 🏗️ Software architecture
 * ...and much more
 
+## 🎥 Interactive Demo
+
+Clicky can generate interactive visual explanations from simple prompts.
+
+👉 **[Open the interactive demo](examples/demo.html)**
 ---
 
 ## 🎨 Clean Diagram + Human Annotations
